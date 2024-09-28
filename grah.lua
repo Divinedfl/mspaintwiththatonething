@@ -1,28 +1,124 @@
-local hwid;
-_G.timeTowait = 30
-task.spawn(function()
-    local http_request = (syn and syn.request) or request;
-    local body, decoded;
-    body = http_request({Url = "https://httpbin.org/get", Method = "GET"})
-    decoded = game:GetService("HttpService"):JSONDecode(body)
+if not getgenv().ExecutorSupport then
+    local Workspace = game:GetService("Workspace")
+
+    local executorSupport = {}
+    local executorName = string.split(identifyexecutor() or "None", " ")[1]
+    local noRequire = {"Arceus", "Codex", "Vega"}
+
+    function test(name: string, func: () -> (), ...)
+        local success, _ = pcall(func, ...)
+        executorSupport[name] = success
+        
+        return success
+    end
+
+    test("require", function()
+        assert(table.find(noRequire, executorName) == nil, "garbage executor")
+        require(game:GetService("ReplicatedStorage"):WaitForChild("ModuleScript"))
+    end)
+    test("hookmetamethod", function()
+        local object = setmetatable({}, { __index = newcclosure(function() return false end), __metatable = "Locked!" })
+        local ref = hookmetamethod(object, "__index", function() return true end)
+        assert(object.test == true, "Failed to hook a metamethod and change the return value")
+        assert(ref() == false, "Did not return the original function")
+    end)
+    test("getnamecallmethod", function()
+        pcall(function()
+            game:NAMECALL_METHODS_ARE_IMPORTANT()
+        end)
     
-    for i, v in pairs(decoded.headers) do
-        if string.find(i, "Fingerprint") then
-            hwid = v;
-            break
+        assert(getnamecallmethod() == "NAMECALL_METHODS_ARE_IMPORTANT", "getnamecallmethod did not return the real namecall method")
+    end)
+    test("firesignal", function()
+        local event = Instance.new("BindableEvent")
+        local fired = false
+
+        event.Event:Once(function(value)
+            fired = value
+        end)
+
+        firesignal(event.Event, true)
+
+        task.wait()
+        event:Destroy()
+
+        assert(fired, "Failed to fire a BindableEvent")
+    end)
+    local canFirePrompt = test("fireproximityprompt", function()
+        local prompt = Instance.new("ProximityPrompt", Instance.new("Part", Workspace))
+        local triggered = false
+
+        prompt.Triggered:Once(function()
+            triggered = true
+        end)
+
+        fireproximityprompt(prompt)
+        task.wait(0.1)
+
+        prompt.Parent:Destroy()
+        assert(triggered, "Failed to fire proximity prompt")
+    end)
+
+    --// Fixes \\--
+
+    if not canFirePrompt then
+        getgenv().fireproximityprompt = function(prompt: ProximityPrompt, lookToPrompt: boolean)
+            if not prompt:IsA("ProximityPrompt") then
+                return error("ProximityPrompt expected, got " .. typeof(prompt))
+            end
+
+            local connection
+            local promptPosition = prompt.Parent:GetPivot().Position
+        
+            local originalEnabled = prompt.Enabled
+            local originalHold = prompt.HoldDuration
+            local originalLineOfSight = prompt.RequiresLineOfSight
+            local originalCamCFrame = workspace.CurrentCamera.CFrame
+        
+            prompt.Enabled = true
+            prompt.HoldDuration = 0
+            prompt.RequiresLineOfSight = false
+            
+            if lookToPrompt then
+                workspace.CurrentCamera.CFrame = CFrame.new(workspace.CurrentCamera.CFrame.Position, promptPosition)
+                connection = workspace.CurrentCamera:GetPropertyChangedSignal("CFrame"):Connect(function()
+                    workspace.CurrentCamera.CFrame = CFrame.new(workspace.CurrentCamera.CFrame.Position, promptPosition)
+                end)
+
+                task.wait()
+            end
+
+            prompt:InputHoldEnd()
+            prompt:InputHoldBegin()
+            prompt:InputHoldEnd()
+
+            if connection then connection:Disconnect() end
+
+            prompt.Enabled = originalEnabled
+            prompt.HoldDuration = originalHold
+            prompt.RequiresLineOfSight = originalLineOfSight
+            workspace.CurrentCamera.CFrame = originalCamCFrame
         end
     end
-end)
 
-local time = _G.timeTowait
-local waited = 0;
-while not hwid do
-    if (waited > time) then
-        warn("Can\'t get HWID. Try executing again.")
+    if not isnetworkowner then
+        getgenv().isnetworkowner = function(part: BasePart)
+            if not part:IsA("BasePart") then
+                return error("BasePart expected, got " .. typeof(part))
+            end
+
+            return part.ReceiveAge == 0
+        end
     end
 
-    waited += 1
-    task.wait(1)
+    --// Load \\--
+
+    executorSupport["_ExecutorName"] = executorName
+    for name, result in pairs(executorSupport) do
+        print(name .. ":", result)
+    end
+
+    getgenv().ExecutorSupport = executorSupport
 end
 
-print(hwid)
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Divinedfl/mspaintwiththatonething/refs/heads/main/gr.lua"))()
